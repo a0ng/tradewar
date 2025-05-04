@@ -451,6 +451,7 @@
         turn: 0,
         retaliationDelay: 0,
         retaliated: false,
+        lastTariffChange: "none",
       };
 
       const history = [];
@@ -525,30 +526,120 @@
         domesticDemandValue.textContent = domesticDemandSlider.value;
       });
 
+      // Calculate new economic state based on AA-DD model
+      async function calculateNewEconomicState() {
+        try {
+          const response = await fetch("http://localhost:8000/calculate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              tariff_rate: state.tariffRate,
+              foreign_tariff_rate: state.foreignTariffRate,
+              world_demand: state.worldDemand,
+              domestic_demand: state.domesticDemand,
+              retaliated: state.retaliated,
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const result = await response.json();
+
+          // Update state with new values
+          state.gdp = result.gdp;
+          state.exchangeRate = result.exchange_rate;
+          state.currentAccount = result.current_account;
+
+          return result;
+        } catch (error) {
+          console.error("Error calculating economic state:", error);
+          throw error;
+        }
+      }
+
+      // Generate points for AA curve
+      async function generateAACurve() {
+        try {
+          const response = await fetch(
+            "http://localhost:8000/generate-curves",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                tariff_rate: state.tariffRate,
+                foreign_tariff_rate: state.foreignTariffRate,
+              }),
+            }
+          );
+
+          const result = await response.json();
+          return result.aa_curve;
+        } catch (error) {
+          console.error("Error generating AA curve:", error);
+          return [];
+        }
+      }
+
+      // Generate points for DD curve
+      async function generateDDCurve() {
+        try {
+          const response = await fetch(
+            "http://localhost:8000/generate-curves",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                tariff_rate: state.tariffRate,
+                foreign_tariff_rate: state.foreignTariffRate,
+              }),
+            }
+          );
+
+          const result = await response.json();
+          return result.dd_curve;
+        } catch (error) {
+          console.error("Error generating DD curve:", error);
+          return [];
+        }
+      }
+
       // Apply policy changes
-      applyPolicyButton.addEventListener("click", () => {
-        const prevState = { ...state };
-        const prevTariffRate = state.tariffRate;
+      applyPolicyButton.addEventListener("click", async () => {
+        try {
+          const prevState = { ...state };
+          const prevTariffRate = state.tariffRate;
 
-        // Update state with new policy settings
-        state.tariffRate = parseInt(tariffRateSlider.value);
-        state.worldDemand = parseInt(worldDemandSlider.value);
-        state.domesticDemand = parseInt(domesticDemandSlider.value);
-        state.turn++;
+          // Update state with new policy settings
+          state.tariffRate = parseInt(tariffRateSlider.value);
+          state.worldDemand = parseInt(worldDemandSlider.value);
+          state.domesticDemand = parseInt(domesticDemandSlider.value);
+          state.turn++;
 
-        // Check for foreign retaliation based on tariff changes
-        handleForeignRetaliation(prevTariffRate);
+          // Check for foreign retaliation based on tariff changes
+          handleForeignRetaliation(prevTariffRate);
 
-        // Calculate new economic indicators based on the AA-DD model
-        calculateNewEconomicState();
+          // Calculate new economic indicators based on the AA-DD model
+          await calculateNewEconomicState();
 
-        // Update UI
-        updateIndicators(prevState);
-        updateForeignTariffUI();
-        updateCharts();
-        addHistoryEntry(
-          `Turn ${state.turn}: Domestic Tariff ${state.tariffRate}%, Foreign Tariff ${state.foreignTariffRate}%, World Demand ${state.worldDemand}%, Domestic Demand ${state.domesticDemand}%`
-        );
+          // Update UI
+          updateIndicators(prevState);
+          updateForeignTariffUI();
+          await updateCharts();
+
+          addHistoryEntry(
+            `Turn ${state.turn}: Domestic Tariff ${state.tariffRate}%, Foreign Tariff ${state.foreignTariffRate}%, World Demand ${state.worldDemand}%, Domestic Demand ${state.domesticDemand}%`
+          );
+        } catch (error) {
+          console.error("Error applying policy changes:", error);
+        }
       });
 
       // Handle foreign retaliation to tariff changes
@@ -556,20 +647,22 @@
         // Reset retaliation flag
         state.retaliated = false;
 
-        // If domestic tariffs increased, foreign countries will respond
+        // If domestic tariffs increased, foreign countries will respond with higher tariffs
         if (state.tariffRate > prevTariffRate) {
           // Foreign countries prepare to retaliate
           state.retaliationDelay = 1; // Will retaliate after 1 turn
+          state.lastTariffChange = "increase";
           foreignStatusElement.textContent =
             "Foreign countries are considering retaliation";
           foreignStatusElement.className = "foreign-status";
         }
         // If domestic tariffs decreased
         else if (state.tariffRate < prevTariffRate) {
-          // Foreign countries may reduce their tariffs as well, but with a delay
+          // Foreign countries will match the lower tariffs
           state.retaliationDelay = 1;
+          state.lastTariffChange = "decrease";
           foreignStatusElement.textContent =
-            "Foreign countries are considering tariff reduction";
+            "Foreign countries are considering matching the lower tariffs";
           foreignStatusElement.className = "foreign-status";
         }
         // If retaliationDelay is active and it's time to act
@@ -577,19 +670,23 @@
           state.retaliationDelay--;
 
           if (state.retaliationDelay === 0) {
-            // Time to retaliate - set foreign tariff to domestic + 1%
-            state.foreignTariffRate = Math.min(50, state.tariffRate + 1);
-            state.retaliated = true;
-
-            if (state.foreignTariffRate > prevTariffRate) {
+            if (state.lastTariffChange === "increase") {
+              // Retaliation for increased tariffs - set foreign tariff to domestic + 1%
+              state.foreignTariffRate = Math.min(50, state.tariffRate + 1);
+              state.retaliated = true;
               foreignStatusElement.textContent =
                 "Foreign countries have retaliated with higher tariffs!";
               foreignStatusElement.className = "foreign-status retaliation";
-            } else {
+            } else if (state.lastTariffChange === "decrease") {
+              // Matching response for decreased tariffs - set foreign tariff equal to domestic
+              state.foreignTariffRate = state.tariffRate;
+              state.retaliated = false; // No penalty for tariff reduction
               foreignStatusElement.textContent =
-                "Foreign countries have adjusted their tariffs";
+                "Foreign countries have matched the lower tariffs";
               foreignStatusElement.className = "foreign-status";
             }
+            // Reset the lastTariffChange after acting on it
+            state.lastTariffChange = "none";
           }
         }
       }
@@ -601,134 +698,59 @@
       }
 
       // Reset simulation
-      resetSimulationButton.addEventListener("click", () => {
-        // Reset to initial values
-        state.gdp = 100;
-        state.exchangeRate = 1.0;
-        state.currentAccount = 0;
-        state.tariffRate = 10;
-        state.foreignTariffRate = 10;
-        state.worldDemand = 100;
-        state.domesticDemand = 100;
-        state.turn = 0;
-        state.retaliationDelay = 0;
-        state.retaliated = false;
+      resetSimulationButton.addEventListener("click", async () => {
+        try {
+          const response = await fetch("http://localhost:8000/reset", {
+            method: "POST",
+          });
+          const result = await response.json();
 
-        // Reset sliders
-        tariffRateSlider.value = "10";
-        tariffRateValue.textContent = "10";
-        worldDemandSlider.value = "100";
-        worldDemandValue.textContent = "100";
-        domesticDemandSlider.value = "100";
-        domesticDemandValue.textContent = "100";
+          // Reset to initial values
+          state.gdp = result.gdp;
+          state.exchangeRate = result.exchange_rate;
+          state.currentAccount = result.current_account;
+          state.tariffRate = 10;
+          state.foreignTariffRate = 10;
+          state.worldDemand = 100;
+          state.domesticDemand = 100;
+          state.turn = 0;
+          state.retaliationDelay = 0;
+          state.retaliated = false;
+          state.lastTariffChange = "none";
 
-        // Reset foreign tariff display
-        foreignTariffValueElement.textContent = "10";
-        foreignStatusElement.textContent = "Initial state";
-        foreignStatusElement.className = "foreign-status";
+          // Reset sliders
+          tariffRateSlider.value = "10";
+          tariffRateValue.textContent = "10";
+          worldDemandSlider.value = "100";
+          worldDemandValue.textContent = "100";
+          domesticDemandSlider.value = "100";
+          domesticDemandValue.textContent = "100";
 
-        // Update UI
-        updateIndicators({});
-        resetCharts();
+          // Reset foreign tariff display
+          foreignTariffValueElement.textContent = "10";
+          foreignStatusElement.textContent = "Initial state";
+          foreignStatusElement.className = "foreign-status";
 
-        // Clear history except initial entry
-        while (historyLogElement.childNodes.length > 1) {
-          historyLogElement.removeChild(historyLogElement.lastChild);
+          // Update UI
+          updateIndicators({});
+          await resetCharts();
+
+          // Clear history except initial entry
+          while (historyLogElement.childNodes.length > 1) {
+            historyLogElement.removeChild(historyLogElement.lastChild);
+          }
+
+          history.length = 0;
+        } catch (error) {
+          console.error("Error resetting simulation:", error);
         }
-
-        history.length = 0;
       });
-
-      // Calculate new economic state based on AA-DD model
-      function calculateNewEconomicState() {
-        // Simplified AA-DD model calculations
-
-        // Effect of domestic tariff rate on GDP (DD curve)
-        // Higher tariffs boost GDP by substituting imports with domestic production
-        const tariffEffect = (state.tariffRate - 10) * 0.15;
-
-        // Effect of foreign tariffs on GDP (reduces exports)
-        // Higher foreign tariffs hurt GDP by reducing exports
-        const foreignTariffEffect = (state.foreignTariffRate - 10) * -0.12;
-
-        // Effect of world demand (DD curve)
-        // Higher world demand increases exports and GDP
-        const worldDemandEffect = (state.worldDemand - 100) * 0.1;
-
-        // Effect of domestic demand (DD curve)
-        // Higher domestic demand increases GDP
-        const domesticDemandEffect = (state.domesticDemand - 100) * 0.12;
-
-        // Calculate GDP change, including foreign tariff effects
-        const gdpChange =
-          tariffEffect +
-          foreignTariffEffect +
-          worldDemandEffect +
-          domesticDemandEffect;
-        state.gdp = Math.max(50, Math.min(150, state.gdp + gdpChange));
-
-        // Effect of tariff rate on exchange rate (AA curve)
-        // Higher domestic tariffs may appreciate the currency (but with some complexity)
-        const tariffExchangeEffect = (state.tariffRate - 10) * 0.005;
-
-        // Effect of foreign tariff rate on exchange rate (AA curve)
-        // Higher foreign tariffs may depreciate the domestic currency
-        const foreignTariffExchangeEffect =
-          (state.foreignTariffRate - 10) * -0.003;
-
-        // Current account affects exchange rate (AA curve)
-        // A positive current account tends to appreciate the currency
-        const caExchangeEffect = state.currentAccount * 0.01;
-
-        // Calculate exchange rate change, including foreign tariff effects
-        const exchangeRateChange =
-          tariffExchangeEffect + foreignTariffExchangeEffect + caExchangeEffect;
-        state.exchangeRate = Math.max(
-          0.5,
-          Math.min(1.5, state.exchangeRate + exchangeRateChange)
-        );
-
-        // Calculate current account based on tariffs, exchange rate, and demand
-        // Higher domestic tariffs reduce imports, improving current account
-        // Higher foreign tariffs reduce exports, worsening current account
-        // Stronger currency reduces exports, worsening current account
-        // Higher world demand improves current account
-        const tariffCAEffect = (state.tariffRate - 10) * 0.1;
-        const foreignTariffCAEffect = (state.foreignTariffRate - 10) * -0.15;
-        const exchangeRateCAEffect = (1 - state.exchangeRate) * 8;
-        const worldDemandCAEffect = (state.worldDemand - 100) * 0.08;
-        const domesticDemandCAEffect = (100 - state.domesticDemand) * 0.05;
-
-        // Calculate current account balance with foreign tariff effects
-        state.currentAccount = Math.max(
-          -15,
-          Math.min(
-            15,
-            tariffCAEffect +
-              foreignTariffCAEffect +
-              exchangeRateCAEffect +
-              worldDemandCAEffect +
-              domesticDemandCAEffect
-          )
-        );
-
-        // If retaliation just happened this turn, add an immediate extra impact
-        // Representing market shock/adjustment costs from sudden policy changes
-        if (state.retaliated) {
-          // Retaliation creates market uncertainty temporarily reducing GDP
-          state.gdp -= 1.5;
-          // And can cause exchange rate volatility
-          state.exchangeRate -= 0.02;
-          // And immediately worsens current account due to trade disruption
-          state.currentAccount -= 0.8;
-        }
-      }
 
       // Update economic indicators in the UI
       function updateIndicators(prevState) {
         // Update GDP
         gdpValueElement.textContent = state.gdp.toFixed(1);
-        if (prevState.gdp) {
+        if (prevState.gdp !== undefined) {
           const gdpChange = state.gdp - prevState.gdp;
           gdpChangeElement.textContent = formatChange(gdpChange);
           gdpChangeElement.className =
@@ -737,7 +759,7 @@
 
         // Update exchange rate
         exchangeRateValueElement.textContent = state.exchangeRate.toFixed(2);
-        if (prevState.exchangeRate) {
+        if (prevState.exchangeRate !== undefined) {
           const exchangeRateChange =
             state.exchangeRate - prevState.exchangeRate;
           exchangeRateChangeElement.textContent =
@@ -956,92 +978,64 @@
         });
       }
 
-      // Generate points for AA curve
-      function generateAACurve() {
-        const points = [];
-        for (let gdp = 60; gdp <= 140; gdp += 5) {
-          // AA curve equation: Exchange rate = f(GDP, domestic tariff, foreign tariff)
-          // Higher GDP tends to increase exchange rate in AA curve
-          // Higher domestic tariffs tend to appreciate the exchange rate
-          // Higher foreign tariffs tend to depreciate the exchange rate
-          const exchangeRate =
-            1 +
-            (gdp - 100) * 0.002 +
-            (state.tariffRate - 10) * 0.005 +
-            (state.foreignTariffRate - 10) * -0.003;
-          points.push({ x: gdp, y: exchangeRate });
-        }
-        return points;
-      }
-
-      // Generate points for DD curve
-      function generateDDCurve() {
-        const points = [];
-        for (
-          let exchangeRate = 0.6;
-          exchangeRate <= 1.4;
-          exchangeRate += 0.05
-        ) {
-          // DD curve equation: GDP = f(Exchange rate, domestic tariff, foreign tariff)
-          // Higher exchange rate reduces GDP in DD curve
-          // Higher domestic tariffs increase GDP in DD curve
-          // Higher foreign tariffs decrease GDP in DD curve
-          const gdp =
-            100 -
-            (exchangeRate - 1) * 40 +
-            (state.tariffRate - 10) * 0.15 +
-            (state.foreignTariffRate - 10) * -0.12;
-          points.push({ x: gdp, y: exchangeRate });
-        }
-        return points;
-      }
-
       // Update charts with new data
-      function updateCharts() {
-        // Add new data point to GDP chart
-        gdpChart.data.labels.push("Turn " + state.turn);
-        gdpChart.data.datasets[0].data.push(state.gdp);
+      async function updateCharts() {
+        try {
+          // Add new data point to GDP chart
+          gdpChart.data.labels.push("Turn " + state.turn);
+          gdpChart.data.datasets[0].data.push(state.gdp);
 
-        // Add new data point to Exchange Rate chart
-        exchangeRateChart.data.labels.push("Turn " + state.turn);
-        exchangeRateChart.data.datasets[0].data.push(state.exchangeRate);
+          // Add new data point to Exchange Rate chart
+          exchangeRateChart.data.labels.push("Turn " + state.turn);
+          exchangeRateChart.data.datasets[0].data.push(state.exchangeRate);
 
-        // Add new data point to Current Account chart
-        currentAccountChart.data.labels.push("Turn " + state.turn);
-        currentAccountChart.data.datasets[0].data.push(state.currentAccount);
+          // Add new data point to Current Account chart
+          currentAccountChart.data.labels.push("Turn " + state.turn);
+          currentAccountChart.data.datasets[0].data.push(state.currentAccount);
 
-        // Update AA and DD curves
-        aaddChart.data.datasets[0].data = generateAACurve();
-        aaddChart.data.datasets[1].data = generateDDCurve();
+          // Update AA and DD curves
+          const [aaCurve, ddCurve] = await Promise.all([
+            generateAACurve(),
+            generateDDCurve(),
+          ]);
 
-        // Update current position
-        aaddChart.data.datasets[2].data = [
-          { x: state.gdp, y: state.exchangeRate },
-        ];
+          aaddChart.data.datasets[0].data = aaCurve;
+          aaddChart.data.datasets[1].data = ddCurve;
 
-        // Limit the number of visible data points for better readability
-        const maxVisiblePoints = 10;
-        if (gdpChart.data.labels.length > maxVisiblePoints) {
-          gdpChart.data.labels = gdpChart.data.labels.slice(-maxVisiblePoints);
-          gdpChart.data.datasets[0].data = gdpChart.data.datasets[0].data.slice(
-            -maxVisiblePoints
-          );
-          exchangeRateChart.data.labels = exchangeRateChart.data.labels.slice(
-            -maxVisiblePoints
-          );
-          exchangeRateChart.data.datasets[0].data =
-            exchangeRateChart.data.datasets[0].data.slice(-maxVisiblePoints);
-          currentAccountChart.data.labels =
-            currentAccountChart.data.labels.slice(-maxVisiblePoints);
-          currentAccountChart.data.datasets[0].data =
-            currentAccountChart.data.datasets[0].data.slice(-maxVisiblePoints);
+          // Update current position
+          aaddChart.data.datasets[2].data = [
+            { x: state.gdp, y: state.exchangeRate },
+          ];
+
+          // Limit the number of visible data points for better readability
+          const maxVisiblePoints = 10;
+          if (gdpChart.data.labels.length > maxVisiblePoints) {
+            gdpChart.data.labels = gdpChart.data.labels.slice(
+              -maxVisiblePoints
+            );
+            gdpChart.data.datasets[0].data =
+              gdpChart.data.datasets[0].data.slice(-maxVisiblePoints);
+            exchangeRateChart.data.labels = exchangeRateChart.data.labels.slice(
+              -maxVisiblePoints
+            );
+            exchangeRateChart.data.datasets[0].data =
+              exchangeRateChart.data.datasets[0].data.slice(-maxVisiblePoints);
+            currentAccountChart.data.labels =
+              currentAccountChart.data.labels.slice(-maxVisiblePoints);
+            currentAccountChart.data.datasets[0].data =
+              currentAccountChart.data.datasets[0].data.slice(
+                -maxVisiblePoints
+              );
+          }
+
+          // Update charts
+          gdpChart.update();
+          exchangeRateChart.update();
+          currentAccountChart.update();
+          aaddChart.update();
+        } catch (error) {
+          console.error("Error updating charts:", error);
         }
-
-        // Update charts
-        gdpChart.update();
-        exchangeRateChart.update();
-        currentAccountChart.update();
-        aaddChart.update();
       }
 
       // Reset charts to initial state
