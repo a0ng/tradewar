@@ -11,11 +11,16 @@
         padding: 0;
         background-color: #f0f8ff;
         color: #333;
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
       }
       .container {
         max-width: 1000px;
         margin: 0 auto;
         padding: 20px;
+        box-sizing: border-box;
+        width: 100%;
       }
       header {
         text-align: center;
@@ -26,6 +31,7 @@
         border-radius: 10px;
         padding: 20px;
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        margin-bottom: 40px;
       }
       .map-container {
         position: relative;
@@ -408,6 +414,9 @@
     </div>
 
     <script>
+      // API configuration
+      const API_BASE_URL = "https://tradewar.onrender.com"; // Replace with your Render URL
+
       class IndustryValley {
         constructor() {
           // Game state variables
