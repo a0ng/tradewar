@@ -56,5 +56,18 @@ def reset():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/calculate-gdp', methods=['POST'])
+def calculate_gdp():
+    """Calculate GDP change based on current state"""
+    try:
+        state = request.json
+        if not state:
+            return jsonify({'error': 'No state data provided'}), 400
+            
+        gdp_change = model.calculate_gdp_change(state)
+        return jsonify({'gdp_change': gdp_change})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=8000) 

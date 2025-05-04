@@ -139,3 +139,38 @@ class AADDModel:
         self.gdp = 100
         self.exchange_rate = 1.0
         self.current_account = 0
+
+    def calculate_gdp_change(self, state):
+        """Calculate GDP change based on current state."""
+        try:
+            # Base GDP effects from tariffs
+            tariff_effect = -0.2 * state.get('tariff_rate', 0)  # Negative effect from own tariffs
+            foreign_tariff_effect = -0.3 * state.get('foreign_tariff_rate', 0)  # Stronger negative effect from foreign tariffs
+            
+            # Demand effects (normalized to percentage changes from baseline of 100)
+            world_demand_effect = 0.3 * ((state.get('world_demand', 100) - 100) / 100)  # World demand above/below baseline
+            domestic_demand_effect = 0.4 * ((state.get('domestic_demand', 100) - 100) / 100)  # Domestic demand above/below baseline
+            
+            # Calculate total policy effect
+            policy_effect = tariff_effect + foreign_tariff_effect + world_demand_effect + domestic_demand_effect
+            
+            # Add natural growth (approximately 2% annually = 0.5% per quarter)
+            natural_growth = 0.5
+            
+            # Apply retaliation penalty if applicable
+            if state.get('retaliated', False):
+                retaliation_penalty = -1.0  # 1% penalty for retaliation
+            else:
+                retaliation_penalty = 0
+                
+            # Calculate total GDP change
+            total_gdp_change = policy_effect + natural_growth + retaliation_penalty
+            
+            # Ensure the change is within reasonable bounds (-5% to +5% per quarter)
+            total_gdp_change = max(min(total_gdp_change, 5), -5)
+            
+            return total_gdp_change
+            
+        except Exception as e:
+            print(f"Error in calculate_gdp_change: {str(e)}")
+            return 0.5  # Return natural growth as fallback
