@@ -19,7 +19,7 @@ Players implement various policies to boost US industrial capacity while managin
 The frontend is a single HTML file with embedded JavaScript. To run locally:
 
 1. Clone this repository
-2. Open `public/index.html` in a web browser
+2. Open `docs/index.html` in a web browser
 
 ### Backend
 
@@ -45,7 +45,12 @@ The server will start on `http://localhost:8000`
 
 1. Create a new repository on GitHub
 2. Push this code to the repository
-3. Enable GitHub Pages in the repository settings, using the `main` branch and `/public` folder
+3. Enable GitHub Pages in the repository settings:
+   - Go to Settings > Pages
+   - Under "Source", select the main branch
+   - Under "Folder", select `/docs`
+   - Click Save
+4. Your game will be available at `https://<username>.github.io/<repository-name>`
 
 ### Backend (Render)
 
@@ -54,7 +59,22 @@ The server will start on `http://localhost:8000`
 3. Use the following settings:
    - Build Command: `pip install -r requirements.txt`
    - Start Command: `gunicorn app:app`
-4. Update the `API_BASE_URL` in `public/index.html` with your Render URL
+   - Environment Variables:
+     - Add `PYTHON_VERSION`: `3.9.0`
+4. After deployment, copy your Render URL
+5. Update `API_BASE_URL` in `docs/index.html` with your Render URL
+
+## Project Structure
+
+```
+.
+├── README.md
+├── requirements.txt
+├── app.py
+├── aa_dd_model.py
+└── docs/
+    └── index.html
+```
 
 ## License
 
