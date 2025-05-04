@@ -3,7 +3,13 @@ from flask_cors import CORS
 from aa_dd_model import AADDModel
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+# Configure CORS to accept requests from GitHub Pages and localhost
+CORS(app, origins=[
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    'http://localhost',
+    'https://*.github.io'  # Allow all GitHub Pages domains
+])
 
 # Create a single instance of the model
 model = AADDModel()
